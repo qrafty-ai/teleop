@@ -29,7 +29,6 @@ from teleop_xr.camera_views import build_camera_views_config
 from teleop_xr.ik_utils import ensure_ik_dependencies, list_robots_or_exit
 from teleop_xr.events import (
     EventProcessor,
-    EventSettings,
     ButtonEvent,
     ButtonEventType,
     XRButton,
@@ -79,11 +78,6 @@ class DemoCLI(CommonCLI):
     list_robots: bool = False
     """List available robots and exit."""
 
-    # Event system configuration
-    double_press_ms: float = 300
-    """Maximum time between presses to count as double-press (ms)."""
-    long_press_ms: float = 500
-    """Minimum hold time to count as long-press (ms)."""
     enable_events: bool = True
     """Enable the event system for gesture detection."""
 
@@ -694,11 +688,7 @@ def main():
     # --- Event Processor Setup ---
     processor: Optional[EventProcessor] = None
     if cli.enable_events:
-        event_settings = EventSettings(
-            double_press_threshold_ms=cli.double_press_ms,
-            long_press_threshold_ms=cli.long_press_ms,
-        )
-        processor = EventProcessor(event_settings)
+        processor = EventProcessor(cli.event_settings())
 
         def log_event(event: ButtonEvent):
             event_log.append(event)
