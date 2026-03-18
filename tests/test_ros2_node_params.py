@@ -65,6 +65,8 @@ def test_teleop_node_params():
     assert node.cli.host == "0.0.0.0"
     assert node.cli.port == 4443
     assert node.cli.input_mode == InputMode.CONTROLLER
+    assert node.cli.double_press_ms == 300
+    assert node.cli.long_press_ms == 1000
     assert node.cli.head_topic is None
     assert node.cli.wrist_left_topic is None
     assert node.cli.wrist_right_topic is None

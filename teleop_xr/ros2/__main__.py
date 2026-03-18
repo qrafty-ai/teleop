@@ -18,7 +18,7 @@ from teleop_xr.video_stream import ExternalVideoSource
 from teleop_xr.config import TeleopSettings
 from teleop_xr.ros2.cli import Ros2CLI
 from teleop_xr.messages import XRState
-from teleop_xr.events import EventProcessor, EventSettings, ButtonEvent
+from teleop_xr.events import EventProcessor, ButtonEvent
 from teleop_xr.ik_utils import (
     ensure_ik_dependencies,
     list_available_robots as _default_list_available_robots,
@@ -734,7 +734,7 @@ def main():
 
         get_publisher(PoseArray, f"xr/hand_{handed}/joints").publish(pose_array)
 
-    event_processor = EventProcessor(EventSettings())
+    event_processor = EventProcessor(cli.event_settings())
 
     def publish_button_event(event: ButtonEvent):
         try:
