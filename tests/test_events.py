@@ -70,7 +70,7 @@ class TestEventSettings:
     def test_default_values(self):
         settings = EventSettings()
         assert settings.double_press_threshold_ms == 300
-        assert settings.long_press_threshold_ms == 500
+        assert settings.long_press_threshold_ms == 1000
 
     def test_custom_values(self):
         settings = EventSettings(
@@ -104,7 +104,7 @@ class TestButtonDetector:
     def detector(self):
         settings = EventSettings(
             double_press_threshold_ms=300,
-            long_press_threshold_ms=500,
+            long_press_threshold_ms=1000,
         )
         return ButtonDetector(settings)
 
@@ -154,14 +154,14 @@ class TestButtonDetector:
     def test_long_press_detection(self, detector):
         detector.update(XRButton.TRIGGER, XRController.LEFT, True, 1000.0)
 
-        events = detector.update(XRButton.TRIGGER, XRController.LEFT, True, 1400.0)
+        events = detector.update(XRButton.TRIGGER, XRController.LEFT, True, 1900.0)
         assert len(events) == 0
 
-        events = detector.update(XRButton.TRIGGER, XRController.LEFT, True, 1500.0)
+        events = detector.update(XRButton.TRIGGER, XRController.LEFT, True, 2000.0)
         assert len(events) == 1
         assert events[0].type == ButtonEventType.LONG_PRESS
 
-        events = detector.update(XRButton.TRIGGER, XRController.LEFT, True, 1600.0)
+        events = detector.update(XRButton.TRIGGER, XRController.LEFT, True, 2100.0)
         assert len(events) == 0
 
     def test_independent_tracking(self, detector):

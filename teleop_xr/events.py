@@ -67,7 +67,7 @@ class EventSettings:
     """
 
     double_press_threshold_ms: float = 300
-    long_press_threshold_ms: float = 500
+    long_press_threshold_ms: float = 1000
 
 
 @dataclass
