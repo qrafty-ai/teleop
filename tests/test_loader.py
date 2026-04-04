@@ -16,6 +16,7 @@ from teleop_xr.ik.loader import (  # noqa: E402
     list_available_robots,
     RobotLoadError,
 )
+from teleop_xr.ik.robot import BaseRobot  # noqa: E402
 from teleop_xr.ik.robots.h1_2 import UnitreeH1Robot  # noqa: E402
 
 
@@ -42,7 +43,7 @@ def test_load_robot_class_not_baserobot():
     """Test: load_robot_class('teleop_xr.ik.loader:RobotLoadError') raises (not a BaseRobot)"""
     with pytest.raises(RobotLoadError) as excinfo:
         load_robot_class("teleop_xr.ik.loader:RobotLoadError")
-    assert "BaseRobot subclass" in str(excinfo.value)
+    assert "subclass of BaseRobot" in str(excinfo.value)
 
 
 def test_list_available_robots():
@@ -98,12 +99,16 @@ def test_load_robot_class_entry_point_load_error(monkeypatch):
 
 def test_reload_robot_class_none():
     cls = reload_robot_class(None)
-    assert cls == UnitreeH1Robot
+    assert issubclass(cls, BaseRobot)
+    assert cls.__module__ == UnitreeH1Robot.__module__
+    assert cls.__name__ == UnitreeH1Robot.__name__
 
 
 def test_reload_robot_class_explicit():
     cls = reload_robot_class("teleop_xr.ik.robots.h1_2:UnitreeH1Robot")
-    assert cls == UnitreeH1Robot
+    assert issubclass(cls, BaseRobot)
+    assert cls.__module__ == UnitreeH1Robot.__module__
+    assert cls.__name__ == UnitreeH1Robot.__name__
 
 
 def test_list_available_robots_error(monkeypatch):

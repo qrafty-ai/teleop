@@ -13,7 +13,7 @@ class RobotLoadError(Exception):
 
 def _require_robot_subclass(cls: object, source: str) -> type[BaseRobot]:
     if not isinstance(cls, type) or not issubclass(cls, BaseRobot):
-        raise RobotLoadError(f"'{source}' did not resolve to a BaseRobot subclass")
+        raise RobotLoadError(f"'{source}' is not a subclass of BaseRobot")
     return cls
 
 
