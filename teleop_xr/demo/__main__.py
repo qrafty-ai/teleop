@@ -261,6 +261,8 @@ def generate_ik_status_table(
     active: bool,
     solve_time: float,
     parse_time: float,
+    reload_status: str,
+    reload_detail: str,
     xr_state: XRState | None,
     controller: "IKController",
     robot: "BaseRobot",
@@ -275,6 +277,15 @@ def generate_ik_status_table(
     table.add_row("IK Status", f"[{status_style}]{status_text}[/{status_style}]")
     table.add_row("Solve Time", f"{solve_time * 1000:.2f} ms")
     table.add_row("Parse Time", f"{parse_time * 1000:.2f} ms")
+
+    reload_style_map = {
+        "ready": "dim",
+        "reloading": "bold yellow",
+        "done": "bold green",
+        "failed": "bold red",
+    }
+    reload_style = reload_style_map.get(reload_status.lower(), "dim")
+    table.add_row("Reload", f"[{reload_style}]{reload_detail}[/{reload_style}]")
 
     if active and xr_state:
         curr_poses = controller._get_device_poses(xr_state)
@@ -337,7 +348,7 @@ def generate_ik_controls_panel() -> Panel:
     text.append(" to run right EE absolute demo", style="dim")
     text.append("\n• Press ", style="dim")
     text.append("R", style="bold cyan")
-    text.append(" to reload robot module and costs", style="dim")
+    text.append(" to reload robot class (keep solver/JIT)", style="dim")
 
     return Panel(
         text,
@@ -455,14 +466,35 @@ class IKWorker(threading.Thread):
             except Exception as e:
                 self.logger.error(f"Error in IK Worker: {e}")
 
-    def replace_ik_stack(self, robot: "BaseRobot", solver: Any, q_next: np.ndarray):
+    def reload_robot_in_place(
+        self, replacement: "BaseRobot"
+    ) -> tuple[bool, str, np.ndarray]:
         with self._worker_lock:
-            self.robot = robot
-            self.controller.robot = robot
-            self.controller.solver = solver
+            current_q = np.array(self.state_container.get("q", np.array([])))
+            default_q = np.array(replacement.get_default_config())
+            if current_q.size > 0 and current_q.shape != default_q.shape:
+                return (
+                    False,
+                    "Joint dimension changed; cannot patch robot in place without recreating solver",
+                    current_q,
+                )
+
+            # Keep solver identity unchanged by mutating the existing robot object.
+            live_robot = self.robot
+            live_robot.__class__ = replacement.__class__
+            live_robot_state = cast(dict[str, Any], cast(object, live_robot.__dict__))
+            replacement_state = cast(dict[str, Any], cast(object, replacement.__dict__))
+            live_robot_state.clear()
+            live_robot_state.update(replacement_state)
+
+            self.robot = live_robot
+            self.controller.robot = live_robot
             self.controller.reset()
             self.state_container["active"] = False
+
+            q_next = default_q if current_q.size == 0 else current_q
             self.state_container["q"] = q_next
+            return True, "Robot class reloaded in-place (solver preserved)", q_next
 
 
 class TerminalKeyReader:
@@ -656,6 +688,8 @@ def main():
         "active": False,
         "solve_time": 0.0,
         "parse_time": 0.0,
+        "reload_status": "ready",
+        "reload_detail": "Ready (press R)",
         "xr_state": None,
     }
 
@@ -817,7 +851,7 @@ def main():
         )
         layout["right"].split_column(
             Layout(name="status", ratio=2),
-            Layout(name="controls", size=6),
+            Layout(name="controls", size=7),
         )
     else:
         # Split: Left (State), Right (Top: Events, Bottom: Legend)
@@ -858,6 +892,8 @@ def main():
                                 state_container["active"],
                                 state_container["solve_time"],
                                 state_container["parse_time"],
+                                state_container.get("reload_status", "ready"),
+                                state_container.get("reload_detail", "Ready (press R)"),
                                 state_container["xr_state"],
                                 controller,
                                 robot,
@@ -930,13 +966,25 @@ def main():
                                         logger.info(
                                             "Robot reload is already in progress"
                                         )
+                                        state_container["reload_status"] = "reloading"
+                                        state_container["reload_detail"] = (
+                                            "Reload already running..."
+                                        )
                                         continue
                                     if ee_demo_running:
                                         logger.info(
                                             "Cannot reload while an EE demo is running"
                                         )
+                                        state_container["reload_status"] = "failed"
+                                        state_container["reload_detail"] = (
+                                            "Blocked: wait for EE demo to finish"
+                                        )
                                         continue
                                     reload_running = True
+                                    state_container["reload_status"] = "reloading"
+                                    state_container["reload_detail"] = (
+                                        "Reloading robot class (solver unchanged)..."
+                                    )
 
                                 def _run_reload() -> None:
                                     nonlocal reload_running, robot
@@ -945,40 +993,26 @@ def main():
                                             return
 
                                         logger.info(
-                                            "Reloading robot module and rebuilding IK solver..."
+                                            "Reloading robot module in-place (preserving solver)..."
                                         )
 
                                         from teleop_xr.ik.loader import (
                                             reload_robot_class,
                                         )
-                                        from teleop_xr.ik.solver import PyrokiSolver
 
                                         new_robot_cls = reload_robot_class(
                                             cli.robot_class
                                         )
                                         new_robot = new_robot_cls(**robot_args)
-                                        new_solver = PyrokiSolver(new_robot)
-
-                                        current_q = np.array(
-                                            state_container.get("q", np.array([]))
+                                        ok, detail, q_next = (
+                                            ik_worker.reload_robot_in_place(new_robot)
                                         )
-                                        default_q = np.array(
-                                            new_robot.get_default_config()
-                                        )
-                                        if current_q.shape == default_q.shape:
-                                            q_next = current_q
-                                        else:
-                                            logger.warning(
-                                                "Joint dimension changed after reload. Using default configuration."
-                                            )
-                                            q_next = default_q
-
-                                        ik_worker.replace_ik_stack(
-                                            robot=new_robot,
-                                            solver=new_solver,
-                                            q_next=q_next,
-                                        )
-                                        robot = new_robot
+                                        if not ok:
+                                            logger.warning(detail)
+                                            state_container["reload_status"] = "failed"
+                                            state_container["reload_detail"] = detail
+                                            return
+                                        robot = ik_worker.robot
 
                                         if (
                                             ik_worker.teleop_loop
@@ -987,7 +1021,7 @@ def main():
                                             joint_dict = {
                                                 name: float(val)
                                                 for name, val in zip(
-                                                    new_robot.actuated_joint_names,
+                                                    ik_worker.robot.actuated_joint_names,
                                                     q_next,
                                                 )
                                             }
@@ -997,10 +1031,18 @@ def main():
                                             )
 
                                         logger.info(
-                                            "Robot reload complete. Updated solver and controller state."
+                                            "Robot class reload complete. Solver preserved."
+                                        )
+                                        state_container["reload_status"] = "done"
+                                        state_container["reload_detail"] = (
+                                            "Class reloaded (solver unchanged)"
                                         )
                                     except Exception as e:
                                         logger.error(f"Robot reload failed: {e}")
+                                        state_container["reload_status"] = "failed"
+                                        state_container["reload_detail"] = (
+                                            f"Reload failed: {type(e).__name__}"
+                                        )
                                     finally:
                                         with reload_lock:
                                             reload_running = False
