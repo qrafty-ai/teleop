@@ -1,4 +1,7 @@
 import hashlib
+import pytest
+
+pytest.importorskip("git")
 from teleop_xr import ram
 
 

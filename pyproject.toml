@@ -97,7 +97,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--cov=teleop_xr --cov-report=xml --cov-report=term-missing"
+addopts = ""
 testpaths = ["tests"]
 
 [tool.coverage.run]
