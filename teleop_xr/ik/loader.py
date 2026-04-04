@@ -1,5 +1,6 @@
 import importlib
 import importlib.metadata
+from typing import cast
 from teleop_xr.ik.robot import BaseRobot
 from teleop_xr.ik.robots.h1_2 import UnitreeH1Robot
 
@@ -8,6 +9,44 @@ class RobotLoadError(Exception):
     """Custom exception for robot loading errors."""
 
     pass
+
+
+def _require_robot_subclass(cls: object, source: str) -> type[BaseRobot]:
+    if not isinstance(cls, type) or not issubclass(cls, BaseRobot):
+        raise RobotLoadError(f"'{source}' did not resolve to a BaseRobot subclass")
+    return cls
+
+
+def _resolve_robot_target(robot_spec: str | None) -> tuple[str, str]:
+    if robot_spec is None:
+        return UnitreeH1Robot.__module__, UnitreeH1Robot.__name__
+
+    if ":" in robot_spec:
+        module_name, class_name = robot_spec.split(":", 1)
+        if not module_name or not class_name:
+            raise RobotLoadError(
+                f"Invalid robot specification: '{robot_spec}'. Must be in 'module:ClassName' format."
+            )
+        return module_name, class_name
+
+    try:
+        eps = importlib.metadata.entry_points(group="teleop_xr.robots")
+    except Exception as e:
+        raise RobotLoadError(f"Failed to discover robot entry points: {e}") from e
+
+    if robot_spec not in eps.names:
+        raise RobotLoadError(
+            f"Invalid robot specification: '{robot_spec}'. Must be an entry point name or 'module:ClassName' format."
+        )
+
+    target = eps[robot_spec].value
+    if ":" not in target:
+        raise RobotLoadError(
+            f"Entry point '{robot_spec}' has invalid target '{target}'. Expected 'module:ClassName'."
+        )
+
+    module_name, class_name = target.split(":", 1)
+    return module_name, class_name
 
 
 def load_robot_class(robot_spec: str | None = None) -> type[BaseRobot]:
@@ -33,50 +72,32 @@ def load_robot_class(robot_spec: str | None = None) -> type[BaseRobot]:
     Raises:
         RobotLoadError: If the robot class cannot be loaded or is invalid.
     """
-    if robot_spec is None:
-        return UnitreeH1Robot
-
-    # 2. Entry point discovery
+    module_name, class_name = _resolve_robot_target(robot_spec)
+    source = robot_spec if robot_spec is not None else f"{module_name}:{class_name}"
     try:
-        # Get entry points for the group
-        eps = importlib.metadata.entry_points(group="teleop_xr.robots")
-        if robot_spec in eps.names:
-            cls = eps[robot_spec].load()
-            if not isinstance(cls, type) or not issubclass(cls, BaseRobot):
-                raise RobotLoadError(
-                    f"Entry point '{robot_spec}' did not return a BaseRobot subclass"
-                )
-            return cls
-    except RobotLoadError:
-        raise
-    except Exception as e:
-        # If entry point exists but fails to load, we should probably report it
-        # but if it doesn't exist, we just fall through
-        eps = importlib.metadata.entry_points(group="teleop_xr.robots")
-        if robot_spec in eps.names:
-            raise RobotLoadError(
-                f"Failed to load robot class from entry point '{robot_spec}': {e}"
-            ) from e
+        module = importlib.import_module(module_name)
+        cls = cast(object, getattr(module, class_name))
+    except (ImportError, AttributeError) as e:
+        raise RobotLoadError(
+            f"Failed to load robot class from spec '{source}': {e}"
+        ) from e
 
-    # 3. Explicit module:ClassName
-    if ":" in robot_spec:
-        try:
-            module_name, class_name = robot_spec.split(":", 1)
-            module = importlib.import_module(module_name)
-            cls = getattr(module, class_name)
-            if not isinstance(cls, type) or not issubclass(cls, BaseRobot):
-                raise RobotLoadError(
-                    f"Class '{class_name}' in module '{module_name}' is not a subclass of BaseRobot"
-                )
-            return cls
-        except (ImportError, AttributeError) as e:
-            raise RobotLoadError(
-                f"Failed to load robot class from spec '{robot_spec}': {e}"
-            ) from e
+    return _require_robot_subclass(cls, source)
 
-    raise RobotLoadError(
-        f"Invalid robot specification: '{robot_spec}'. Must be an entry point name or 'module:ClassName' format."
-    )
+
+def reload_robot_class(robot_spec: str | None = None) -> type[BaseRobot]:
+    module_name, class_name = _resolve_robot_target(robot_spec)
+    source = robot_spec if robot_spec is not None else f"{module_name}:{class_name}"
+    try:
+        module = importlib.import_module(module_name)
+        reloaded_module = importlib.reload(module)
+        cls = cast(object, getattr(reloaded_module, class_name))
+    except (ImportError, AttributeError) as e:
+        raise RobotLoadError(
+            f"Failed to reload robot class from spec '{source}': {e}"
+        ) from e
+
+    return _require_robot_subclass(cls, source)
 
 
 def list_available_robots() -> dict[str, str]:

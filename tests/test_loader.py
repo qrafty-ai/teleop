@@ -10,7 +10,12 @@ except ImportError:
         "jaxls, pyroki, jaxlie, or yourdfpy not installed", allow_module_level=True
     )
 
-from teleop_xr.ik.loader import load_robot_class, list_available_robots, RobotLoadError  # noqa: E402
+from teleop_xr.ik.loader import (  # noqa: E402
+    load_robot_class,
+    reload_robot_class,
+    list_available_robots,
+    RobotLoadError,
+)
 from teleop_xr.ik.robots.h1_2 import UnitreeH1Robot  # noqa: E402
 
 
@@ -37,7 +42,7 @@ def test_load_robot_class_not_baserobot():
     """Test: load_robot_class('teleop_xr.ik.loader:RobotLoadError') raises (not a BaseRobot)"""
     with pytest.raises(RobotLoadError) as excinfo:
         load_robot_class("teleop_xr.ik.loader:RobotLoadError")
-    assert "is not a subclass of BaseRobot" in str(excinfo.value)
+    assert "BaseRobot subclass" in str(excinfo.value)
 
 
 def test_list_available_robots():
@@ -58,13 +63,13 @@ def test_load_robot_class_entry_point():
 
 
 def test_load_robot_class_entry_point_load_error(monkeypatch):
-    """Test: load_robot_class raises RobotLoadError if entry point load fails"""
+    """Test: load_robot_class raises RobotLoadError if entry point target import fails"""
     from unittest.mock import MagicMock
 
-    # Mock entry point that fails to load
+    # Mock entry point that resolves to a bad module path
     bad_ep = MagicMock()
     bad_ep.name = "bad_robot"
-    bad_ep.load.side_effect = ImportError("Broken dependency")
+    bad_ep.value = "nonexistent:Nope"
 
     # Mock entry_points return value
     # Python 3.10+ returns a SelectableGroups, we need to mock access by name/iteration
@@ -88,7 +93,17 @@ def test_load_robot_class_entry_point_load_error(monkeypatch):
     with pytest.raises(RobotLoadError) as excinfo:
         load_robot_class("bad_robot")
     assert "Failed to load robot class" in str(excinfo.value)
-    assert "Broken dependency" in str(excinfo.value)
+    assert "nonexistent" in str(excinfo.value)
+
+
+def test_reload_robot_class_none():
+    cls = reload_robot_class(None)
+    assert cls == UnitreeH1Robot
+
+
+def test_reload_robot_class_explicit():
+    cls = reload_robot_class("teleop_xr.ik.robots.h1_2:UnitreeH1Robot")
+    assert cls == UnitreeH1Robot
 
 
 def test_list_available_robots_error(monkeypatch):
