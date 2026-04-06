@@ -11,6 +11,17 @@ class CommonCLI:
     long_press_ms: float = 1000
 
     def event_settings(self):
+        """Create EventSettings from CLI configuration.
+
+        Creates an EventSettings instance configured with the timing values
+        from this CLI configuration (double_press_ms and long_press_ms).
+
+        Note: This method uses a lazy import of EventSettings to avoid
+        circular dependencies.
+
+        Returns:
+            EventSettings: Configured event settings for button press detection.
+        """
         from .events import EventSettings
 
         return EventSettings(
