@@ -75,6 +75,7 @@ ik = [
   "yourdfpy>=0.0.60",
   "pin",
   "teleop-xr[ram]",
+  "dexmate-urdf>=0.8.0",
 ]
 cuda = [
   "jax[cuda12]>=0.6.2",
@@ -86,6 +87,7 @@ franka = "teleop_xr.ik.robots.franka:FrankaRobot"
 openarm = "teleop_xr.ik.robots.openarm:OpenArmRobot"
 so101 = "teleop_xr.ik.robots.so101:SO101Robot"
 teaarm = "teleop_xr.ik.robots.teaarm:TeaArmRobot"
+vega = "teleop_xr.ik.robots.vega:DexmateVegaRobot"
 
 [dependency-groups]
 dev = [
