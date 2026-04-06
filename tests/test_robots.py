@@ -15,6 +15,7 @@ import jaxlie  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 from teleop_xr.ik.robot import BaseRobot  # noqa: E402
 from teleop_xr.ik.robots.h1_2 import UnitreeH1Robot  # noqa: E402
+from teleop_xr.ik.robots.vega import _dexmate_urdf_repo_path  # noqa: E402
 
 H1_URDF = """
 <robot name="h1_2">
@@ -86,3 +87,14 @@ def test_h1_robot(tmp_path):
         assert robot.get_vis_config() is not None
         robot.urdf_path = ""
         assert robot.get_vis_config() is None
+
+
+def test_vega_variant_to_ram_path_mapping():
+    assert (
+        _dexmate_urdf_repo_path("vega_1.vega_1_f5d6")
+        == "robots/humanoid/vega_1/vega_1_f5d6.urdf"
+    )
+    assert (
+        _dexmate_urdf_repo_path("vega_1u.vega_1u_f5d6")
+        == "robots/humanoid/vega_1u/vega_1u_f5d6.urdf"
+    )

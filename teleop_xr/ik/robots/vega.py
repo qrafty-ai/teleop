@@ -1,34 +1,32 @@
 # pyright: reportCallIssue=false
 """
-Dexmate Vega humanoid models (URDF from the dexmate-urdf package).
+Dexmate Vega humanoid models (URDF fetched with RAM).
 
-Install: pip install dexmate-urdf
-See: https://github.com/dexmate-ai/dexmate-urdf
+Source: https://github.com/dexmate-ai/dexmate-urdf
 
-Design cross-check (URDF + costs):
+Design note: Vega uses RAM loading
+----------------------------------
+Vega URDFs are resolved from the dexmate-urdf repository through
+``teleop_xr.ram.get_resource``. This keeps robot onboarding aligned with other
+RAM-backed robots in this project and avoids requiring an additional Python
+package dependency in the runtime environment.
 
-**URDF 导入方式对比**
-- **Unitree H1** (`h1_2.py`): `ram.get_resource` 拉 git 仓库里的 `.urdf`，在内存里把部分
-  `joint_map[...].type = "fixed"`（如腿），再 `yourdfpy.URDF.load` → `pk.Robot.from_urdf`。
-- **TeaArm** (`teaarm.py`): `ram.get_resource` + xacro；碰撞可用包内 `assets/teaarm/collision.json`
-  做 `RobotCollision.from_sphere_decomposition`，否则 `from_urdf`。
-- **Vega（本文件）**: 从已安装的 `dexmate_urdf.robots.humanoid` 取 `Path`（不经 RAM）；
-  冻结轮/指 + `_strip_mimics_to_fixed_joints`（Dexmate 手指带 mimic，固定关节后必须清 mimic，
-  否则 Pyroki 解析失败）；`mesh_path` 为 URDF 所在目录以便相对 mesh 路径解析。
+Joint policy (arm teleop defaults)
+----------------------------------
+- Freeze wheels when present: ``B_wheel_j1/j2``, ``R_wheel_j1/j2``,
+  ``L_wheel_j1/j2``.
+- Freeze dexterous finger chains by prefix (both hands):
+  ``L_th_``, ``L_ff_``, ``L_mf_``, ``L_rf_``, ``L_lf_``, and their ``R_*``
+  counterparts.
+- Keep all other URDF joints actuated.
 
-**Cost 构建（与 H1 同套路，可对齐 TeaArm 调参）**
-- 与 **H1** 一致：`rest_cost(q_current)` → `manipulability` → 双臂 `pose_cost_analytic_jac`
-  → `limit_cost` → 头部 `pose_cost`（仅 z 轴朝向权重）→ 本实现含 **`self_collision_cost`**
-  （接近 **OpenArm / TeaArm**；**H1** 仅用 `from_urdf` 碰撞对象但未在 `build_costs` 里加自碰撞项）。
-- **TeaArm** 额外：`rest_cost` 用**按关节标量权重** `weight=jnp.array(...)`，以及第二段以零位为
-  rest 的“回中”项；Vega 当前用标量 `weight=5.0` 与全零 `get_default_config`，若腰/躯干耦合差
-  可仿 TeaArm 加 per-joint 权重或姿态偏置。
+After freezing, mimic links targeting fixed joints are cleared to keep Pyroki's
+actuated-joint assumptions valid.
 """
 
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import Any
 
 if sys.version_info >= (3, 12):
@@ -43,6 +41,9 @@ import pyroki as pk
 import yourdfpy
 
 from teleop_xr.ik.robot import BaseRobot, Cost
+from teleop_xr import ram
+
+_DEXMATE_URDF_REPO_URL = "https://github.com/dexmate-ai/dexmate-urdf.git"
 
 _WHEEL_JOINTS = (
     "B_wheel_j1",
@@ -75,29 +76,15 @@ def _strip_mimics_to_fixed_joints(urdf: yourdfpy.URDF) -> None:
             joint.mimic = None
 
 
-def _dexmate_urdf_path(variant: str) -> Path:
-    try:
-        from dexmate_urdf import robots as dex_robots
-    except ImportError as e:
-        raise ImportError(
-            "Dexmate Vega requires the 'dexmate-urdf' package. "
-            "Install with: pip install dexmate-urdf"
-        ) from e
-
+def _dexmate_urdf_repo_path(variant: str) -> str:
     parts = variant.split(".")
     if len(parts) < 2:
         raise ValueError(
-            "Dexmate variant must be a dotted path under dexmate_urdf.robots.humanoid, "
-            f"e.g. 'vega_1.vega_1_f5d6', got {variant!r}"
+            "Dexmate variant must be a dotted humanoid path, "
+            f"e.g. 'vega_1.vega_1_f5d6', got {variant!r}."
         )
-
-    mod: Any = dex_robots.humanoid
-    for p in parts:
-        mod = getattr(mod, p)
-    urdf_obj = getattr(mod, "urdf", None)
-    if urdf_obj is None:
-        raise ValueError(f"No 'urdf' attribute on dexmate module for variant {variant!r}")
-    return Path(urdf_obj)
+    subdir = "/".join(parts[:-1])
+    return f"robots/humanoid/{subdir}/{parts[-1]}.urdf"
 
 
 class DexmateVegaRobot(BaseRobot):
@@ -131,6 +118,7 @@ class DexmateVegaRobot(BaseRobot):
         self._variant = variant
         self._freeze_wheels = freeze_wheels
         self._freeze_hands = freeze_hands
+        self._frozen_joint_names: list[str] = []
 
         urdf = self._load_urdf(urdf_string)
 
@@ -138,14 +126,17 @@ class DexmateVegaRobot(BaseRobot):
             for jn in _WHEEL_JOINTS:
                 if jn in urdf.joint_map:
                     urdf.joint_map[jn].type = "fixed"
+                    self._frozen_joint_names.append(jn)
 
         if self._freeze_hands:
             for jn in list(urdf.joint_map.keys()):
                 if any(jn.startswith(prefix) for prefix in _HAND_JOINT_PREFIXES):
                     urdf.joint_map[jn].type = "fixed"
+                    self._frozen_joint_names.append(jn)
 
         _strip_mimics_to_fixed_joints(urdf)
         urdf._update_actuated_joints()
+        self._frozen_joint_names = sorted(set(self._frozen_joint_names))
 
         self.robot = pk.Robot.from_urdf(urdf)
         self.robot_coll = pk.collision.RobotCollision.from_urdf(urdf)
@@ -168,9 +159,16 @@ class DexmateVegaRobot(BaseRobot):
         self.head_link_idx = names.index(self.head_link_name)
 
     def _load_default_urdf(self) -> yourdfpy.URDF:
-        path = _dexmate_urdf_path(self._variant)
-        self.urdf_path = str(path.resolve())
-        self.mesh_path = str(path.parent.resolve())
+        path_inside_repo = _dexmate_urdf_repo_path(self._variant)
+        repo_root = ram.get_repo(repo_url=_DEXMATE_URDF_REPO_URL)
+        self.urdf_path = str(
+            ram.get_resource(
+                repo_url=_DEXMATE_URDF_REPO_URL,
+                path_inside_repo=path_inside_repo,
+                resolve_packages=True,
+            )
+        )
+        self.mesh_path = str(repo_root)
         return yourdfpy.URDF.load(self.urdf_path)
 
     @property
@@ -192,6 +190,10 @@ class DexmateVegaRobot(BaseRobot):
     @override
     def actuated_joint_names(self) -> list[str]:
         return list(self.robot.joints.actuated_names)
+
+    @property
+    def frozen_joint_names(self) -> list[str]:
+        return list(self._frozen_joint_names)
 
     @property
     @override

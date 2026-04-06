@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Any
 from fastapi import FastAPI, HTTPException
@@ -25,6 +26,13 @@ class RobotVisModule:
             self.logger.info(f"Asset request: {file_path}")
             full_path = ""
 
+            def is_within(path: str, root: str) -> bool:
+                try:
+                    Path(path).resolve().relative_to(Path(root).resolve())
+                    return True
+                except ValueError:
+                    return False
+
             if file_path == "robot.urdf":
                 full_path = self.config.urdf_path
                 # If we have a mesh path (repo root), try to rewrite absolute paths in URDF
@@ -34,19 +42,40 @@ class RobotVisModule:
                         with open(full_path, "r") as f:
                             content = f.read()
 
-                        mesh_path_abs = Path(self.config.mesh_path).resolve().as_posix()
-                        if not mesh_path_abs.endswith("/"):
-                            mesh_path_abs += "/"
+                        urdf_dir = Path(self.config.urdf_path).resolve().parent
+                        mesh_root = Path(self.config.mesh_path).resolve()
 
-                        # Handle both forward and backslashes in URDF
-                        # (Relevant for Windows where raw URDFs might have backslashes)
-                        mesh_path_native = mesh_path_abs.replace("/", os.sep)
+                        def rewrite_mesh_filename(match: re.Match[str]) -> str:
+                            quote = match.group(1)
+                            raw = match.group(2)
+                            raw_norm = raw.replace("\\", "/")
 
-                        new_content = content
-                        if mesh_path_abs in new_content:
-                            new_content = new_content.replace(mesh_path_abs, "")
-                        if mesh_path_native in new_content:
-                            new_content = new_content.replace(mesh_path_native, "")
+                            if "://" in raw_norm and not raw_norm.startswith(
+                                "package://"
+                            ):
+                                return match.group(0)
+
+                            if raw_norm.startswith("package://"):
+                                return f"filename={quote}{raw_norm}{quote}"
+
+                            path_obj = Path(raw_norm)
+                            abs_path = (
+                                path_obj.resolve()
+                                if path_obj.is_absolute()
+                                else (urdf_dir / path_obj).resolve()
+                            )
+
+                            try:
+                                rel_path = abs_path.relative_to(mesh_root).as_posix()
+                                return f"filename={quote}{rel_path}{quote}"
+                            except ValueError:
+                                return f"filename={quote}{raw_norm}{quote}"
+
+                        new_content = re.sub(
+                            r"filename\s*=\s*([\"'])([^\"']+)\1",
+                            rewrite_mesh_filename,
+                            content,
+                        )
 
                         if new_content != content:
                             return Response(
@@ -77,7 +106,13 @@ class RobotVisModule:
 
                 if not resolved:
                     if self.config.mesh_path:
-                        full_path = os.path.join(self.config.mesh_path, clean_path)
+                        candidate = str(
+                            (
+                                Path(self.config.mesh_path).resolve() / clean_path
+                            ).resolve()
+                        )
+                        if is_within(candidate, self.config.mesh_path):
+                            full_path = candidate
                     else:
                         self.logger.warning(
                             f"Request for package resource '{file_path}' but 'mesh_path' is not configured."
@@ -85,18 +120,27 @@ class RobotVisModule:
                         full_path = clean_path
             else:
                 # Try relative to URDF directory first
-                urdf_dir = os.path.dirname(os.path.abspath(self.config.urdf_path))
-                potential_paths = [os.path.join(urdf_dir, file_path)]
+                urdf_dir = str(Path(self.config.urdf_path).resolve().parent)
+                potential_paths = [
+                    (str((Path(urdf_dir) / file_path).resolve()), urdf_dir)
+                ]
 
                 # If mesh_path is configured, try resolving against it
                 if self.config.mesh_path:
                     potential_paths.append(
-                        os.path.join(self.config.mesh_path, file_path)
+                        (
+                            str(
+                                (
+                                    Path(self.config.mesh_path).resolve() / file_path
+                                ).resolve()
+                            ),
+                            self.config.mesh_path,
+                        )
                     )
 
-                full_path = potential_paths[0]
-                for p in potential_paths:
-                    if os.path.exists(p):
+                full_path = potential_paths[0][0]
+                for p, root in potential_paths:
+                    if is_within(p, root) and os.path.exists(p):
                         full_path = p
                         break
 

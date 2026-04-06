@@ -127,8 +127,9 @@ TeleopXR currently includes the following built-in robot classes:
   `openarm_description`.
 - `teaarm` - Custom openarm extension with [waist
   joints](https://github.com/qrafty-ai/hardware_designs/tree/main/openarm_waist).
-- `vega` - Dexmate Vega humanoids via the [`dexmate-urdf`](https://github.com/dexmate-ai/dexmate-urdf)
-  package (default variant `vega_1.vega_1_f5d6`; override with `robot_args`).
+- `vega` - Dexmate Vega humanoids loaded via RAM from the
+  [`dexmate-urdf`](https://github.com/dexmate-ai/dexmate-urdf) repository
+  (default variant `vega_1.vega_1_f5d6`; override with `robot_args`).
 
 Use `--list-robots` to show all currently registered robots in your
 environment.

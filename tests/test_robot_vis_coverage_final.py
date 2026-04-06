@@ -104,6 +104,72 @@ def test_asset_resolution_relative_to_urdf(test_app, tmp_path):
     assert response.content == b"glb_data"
 
 
+def test_urdf_rewrite_normalizes_parent_segments(test_app, tmp_path):
+    repo_root = tmp_path / "repo"
+    urdf_dir = repo_root / "robots" / "humanoid" / "vega_1"
+    urdf_dir.mkdir(parents=True)
+
+    mesh_rel = "../../hands/f5d6_hand/meshes/visual/th_l0.glb"
+    urdf_path = urdf_dir / "robot.urdf"
+    urdf_path.write_text(
+        f"""<robot name='vega'>
+  <link name='l'>
+    <visual><geometry><mesh filename='{mesh_rel}'/></geometry></visual>
+  </link>
+</robot>"""
+    )
+
+    mesh_path = repo_root / "robots" / "hands" / "f5d6_hand" / "meshes" / "visual"
+    mesh_path.mkdir(parents=True)
+    (mesh_path / "th_l0.glb").write_bytes(b"glb")
+
+    config = RobotVisConfig(urdf_path=str(urdf_path), mesh_path=str(repo_root))
+    RobotVisModule(test_app, config)
+    client = TestClient(test_app)
+
+    urdf_response = client.get("/robot_assets/robot.urdf")
+    assert urdf_response.status_code == 200
+    assert "../../" not in urdf_response.text
+    rewritten = "robots/hands/f5d6_hand/meshes/visual/th_l0.glb"
+    assert rewritten in urdf_response.text
+
+    mesh_response = client.get(f"/robot_assets/{rewritten}")
+    assert mesh_response.status_code == 200
+    assert mesh_response.content == b"glb"
+
+
+def test_package_traversal_rejected_with_mesh_root(test_app, tmp_path):
+    urdf_path = tmp_path / "robot.urdf"
+    urdf_path.write_text("<robot/>")
+    mesh_root = tmp_path / "meshes"
+    mesh_root.mkdir()
+    (tmp_path / "escape.stl").write_bytes(b"escape")
+
+    config = RobotVisConfig(urdf_path=str(urdf_path), mesh_path=str(mesh_root))
+    RobotVisModule(test_app, config)
+    client = TestClient(test_app)
+
+    response = client.get("/robot_assets/package:%2F%2F..%2F..%2Fescape.stl")
+    assert response.status_code == 404
+
+
+def test_generic_traversal_rejected_with_mesh_root(test_app, tmp_path):
+    urdf_dir = tmp_path / "urdf_dir"
+    urdf_dir.mkdir()
+    urdf_path = urdf_dir / "robot.urdf"
+    urdf_path.write_text("<robot/>")
+    mesh_root = tmp_path / "meshes"
+    mesh_root.mkdir()
+    (tmp_path / "outside.glb").write_bytes(b"outside")
+
+    config = RobotVisConfig(urdf_path=str(urdf_path), mesh_path=str(mesh_root))
+    RobotVisModule(test_app, config)
+    client = TestClient(test_app)
+
+    response = client.get("/robot_assets/%2E%2E/%2E%2E/outside.glb")
+    assert response.status_code == 404
+
+
 def test_asset_not_found(test_app, tmp_path):
     urdf_path = tmp_path / "robot.urdf"
     urdf_path.write_text("<robot/>")
