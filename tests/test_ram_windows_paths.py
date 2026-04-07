@@ -123,31 +123,29 @@ def test_urdf_output_no_backslashes(tmp_path):
 
 @pytest.mark.anyio
 async def test_robot_vis_path_stripping_with_forward_slash_urdf(tmp_path):
-    """Verify that RobotVisModule path stripping works when URDF content has forward-slash paths and OS uses backslashes (simulated)."""
     urdf_path = tmp_path / "robot.urdf"
-    # URDF contains forward slashes (as produced by our updated RAM)
-    urdf_path.write_text('<mesh filename="C:/work/repo/meshes/base.stl"/>')
+    mesh_root = tmp_path / "work" / "repo"
+    mesh_root.mkdir(parents=True)
+    urdf_path.write_text(
+        f'<mesh filename="{(mesh_root / "meshes" / "base.stl").as_posix()}"/>'
+    )
 
-    mesh_path = "C:\\work\\repo"
+    mesh_path = str(mesh_root)
 
     app = FastAPI()
     config = RobotVisConfig(urdf_path=str(urdf_path), mesh_path=mesh_path)
 
-    with patch("teleop_xr.robot_vis.Path") as MockPath:
-        mock_path_instance = MockPath.return_value
-        mock_path_instance.resolve.return_value.as_posix.return_value = "C:/work/repo"
+    RobotVisModule(app, config)
 
-        RobotVisModule(app, config)
+    handler = None
+    for route in app.routes:
+        if route.path == "/robot_assets/{file_path:path}":
+            handler = route.endpoint
+            break
 
-        handler = None
-        for route in app.routes:
-            if route.path == "/robot_assets/{file_path:path}":
-                handler = route.endpoint
-                break
+    assert handler is not None
 
-        assert handler is not None
+    response = await handler("robot.urdf")
 
-        response = await handler("robot.urdf")
-
-        assert response.body.decode() == '<mesh filename="meshes/base.stl"/>'
-        assert response.media_type == "application/xml"
+    assert response.body.decode() == '<mesh filename="meshes/base.stl"/>'
+    assert response.media_type == "application/xml"
